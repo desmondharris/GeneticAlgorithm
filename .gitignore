@@ -1,3 +1,5 @@
 *.zip
 *.pdf
-.venv
+.idea
+*.png
+*.jpg
