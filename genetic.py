@@ -1,9 +1,9 @@
+import queue
 import threading
 import time
 
 import numpy as np
 import random
-import matplotlib.pyplot as plt
 """
 Chromosome: a 100-element numpy array containing the path
 Initial Population: 150
@@ -20,29 +20,34 @@ Pm: 0.05
 Pc: 0.36
 """
 
-def cost(ch, dist):
+def cost(ch: np.array, dist: np.array):
     total = 0.0
     for i in range(1, len(ch)):
-        total += dist[ch[i-1]][ch[i]]
+        total += dist[int(ch[i-1])][int(ch[i])]
+    total += dist[int(ch[98])][99]
     return total
 
 
-def crossover(parent1, parent2):
-    a, b = np.random.choice(np.arange(1, 99), size=2, replace=False)
-    larger = a if a>b else b
-    smaller = b if b<a else a
-    #TODO: Make sure all paths are strictly 1-100, i.e check to make sure mo repeated values
-    child1 = np.append(np.append(parent1[:smaller], parent2[smaller:larger]), parent1[larger:])
-    child2 = np.append(np.append(parent2[:smaller], parent1[smaller:larger]), parent2[larger:])
-    return child1, child2
+def verifyIndividual(ind: np.array):
+    # make sure every city is visited
+    if False in [n in ind for n in range(99)]:
+        raise ValueError("Missing city(ies)")
+
+    if len(ind) != 99:
+        raise ValueError("Invalid chromosone length")
 
 
 
+
+def eventQueueMsg(q, type, payload):
+    if type not in ["guiout", "generationinfo", "eos"]:
+        raise TypeError("Unknown event type")
+    #q.put((type, payload+"\n"))
 
 
 
 class GeneticAlgorithm:
-    def __init__(self, cities, initialPopulation, selection, mutation, pm, pc):
+    def __init__(self, cities, initialPopulation, selection, mutation, pm, pc, q=queue.Queue()):
         # set parameters
         self.populationSize = initialPopulation
 
@@ -62,6 +67,7 @@ class GeneticAlgorithm:
         self.population = np.empty(self.populationSize, dtype=object) # all chromosomes
         self.generationTask = None
         self.spinner_index = 0
+        self.q = q
 
         # create distance matrix to avoid repeated cost calculations
         self.dist = np.zeros((100, 100)) # distance matrix
@@ -90,6 +96,7 @@ class GeneticAlgorithm:
 
 
     def generation(self):
+        eventQueueMsg(self.q, "guiout", f"Beginning Generation {self.history['generations']}")
         parents = self.selection()
         pairs = []
         # assign parent pairs
@@ -99,24 +106,27 @@ class GeneticAlgorithm:
         # create offspring
         offspring = []
         for pair in pairs:
-            off1, off2 = crossover(pair[0], pair[1])
+            off1, off2 = self.csox(pair[0], pair[1])
             offspring.extend([off1, off2])
         _, losers = self.tournament()
         for w, l in zip(offspring, losers):
             self.population[l] = w
+
+        eventQueueMsg(self.q, "guiout", f"Offspring generated, losing individuals killed off. Checking for mutations...")
         # mutate for each indv
         for i in range(self.populationSize):
             self.swap(i)
         self.history["generations"] += 1
         min, max, average = self.evaluate()
-        print(f"Generation: {self.history['generations']} \n Min: {min} \n Max: {max} \n Avg: {average}")
+        # print(f"Generation: {self.history['generations']} \n Min: {min} \n Max: {max} \n Avg: {average}")
         self.history["mins"].append(min)
         self.history["maxes"].append(max)
         self.history["averages"].append(average)
+        eventQueueMsg(self.q, "guiout", "Finished!")
 
     def populate(self):
         # set including all cities
-        pSet = np.arange(100)
+        pSet = np.arange(99, dtype="int64")
         for i in range(self.populationSize):
             ch = pSet.copy()
             np.random.shuffle(ch)
@@ -169,6 +179,93 @@ class GeneticAlgorithm:
             leastFit.append(players[np.argmax(scores)])
 
         return np.array(parents), np.array(leastFit)
+    
+
+    # python implementation of psuedocode in Toathom and Camprasert(2022)
+    def csox(self, parent1, parent2):
+        # get two distinct integers for breakpoints
+        r1 =  random.randint(1, 97)
+        r2 =  random.randint(1, 97)
+
+        if r1 == r2:
+            while r1==r2:
+                r2 = random.randint(1, 97)
+        if r1 > r2:
+            temp = r1
+            r1 = r2
+            r2 = temp
+
+
+        offspring = np.full((6, len(parent1)), -556456)
+        # for i = 0 to 2 do 
+        for i in range(3):
+            if i==0:
+                pos1 = r1
+                pos2 = r2
+            elif i==1:
+                pos1 = 0
+                pos2 = r1
+            elif i==2:
+                pos1 = r2
+                pos2 = len(parent1) 
+
+            # init empty offspring
+            offspring[2*i] = np.full(len(parent1), -345345345, dtype="int64")
+            offspring[2*i+1] = np.full(len(parent1), -345345, dtype="int64")
+
+            # O[2i + 1](pos1 : pos2) ← P1(pos1 : pos2)
+            # O[2i + 2](pos1 : pos2) ← P2(pos1 : pos2)
+            offspring[2*i][pos1:pos2] = parent1[pos1:pos2]
+            middleChunk = parent1[pos1:pos2]
+            offspring[2*i+1][pos1:pos2] = parent2[pos1:pos2]
+
+            p1 = np.full(len(parent1)-(pos2-pos1), -34545, dtype="int64")
+            p2 = np.full(len(parent1)-(pos2-pos1), -234234, dtype="int64")
+
+            pIdx = pos2
+            if pIdx > len(parent1) - 1:
+                pIdx = 0
+            for j in range(len(p1)):
+                while parent1[pIdx] in offspring[2*i+1]:
+                    pIdx += 1
+                    if pIdx > len(parent1) - 1:
+                        pIdx = 0
+                p1[j] = parent1[pIdx]
+                pIdx += 1
+                if pIdx > len(parent1) - 1:
+                    pIdx = 0
+            
+            pIdx = pos2
+            if pIdx > len(parent1) - 1:
+                pIdx = 0
+            for j in range(len(p2)):
+                while parent2[pIdx] in offspring[2*i]:
+                    pIdx += 1
+                    if pIdx > len(parent2) - 1:
+                        pIdx = 0
+                p2[j] = parent2[pIdx]
+                pIdx += 1
+                if pIdx > len(parent2) - 1:
+                    pIdx = 0
+            
+            offspring[i*2][pos2:] = p2[:(len(parent1) - pos2)]
+            rightChunk = p2[:(len(parent1) - pos2)]
+            offspring[i*2][:pos1] = p2[(len(parent1) - pos2):]
+            leftChunk = p2[(len(parent1) - pos2):]
+
+            offspring[i*2+1][pos2:] = p1[:(len(parent1) - pos2)]
+            offspring[i*2+1][:pos1] = p1[(len(parent1) - pos2):]
+            verifyIndividual(offspring[i*2])
+            verifyIndividual(offspring[i*2+1])
+            pass
+        for o in offspring:
+            verifyIndividual(o)
+        costs = [cost(ind, self.dist) for ind in offspring]
+        winnerIndices = np.argpartition(costs, len(costs) -2)[:2]
+        return (offspring[winnerIndices[0]], offspring[winnerIndices[0]])
+
+                
+
 
 
 
@@ -177,7 +274,7 @@ class GeneticAlgorithm:
 
     def swap(self, ch):
         if random.random() < self.pm:
-            idxs = np.arange(100)
+            idxs = np.arange(99)
             np.random.shuffle(idxs)
             for i in range(8):
                 pair = []
@@ -198,7 +295,9 @@ def main():
         for i in range(100):
             _, x, y = f.readline().split()
             cities.append((float(x), float(y)))
+    print("bp1")
     g = GeneticAlgorithm(cities, 200, "roulette", "scramble", .05, 0.2)
+    g.csox(np.array([3,5,8,2,1,9,4,6,7]), np.array([8,1,5,7,3,4,6,2,9]))
     # Run the genetic algorithm for a specified number of generations
     for _ in range(50):  # Increase the number of generations if needed
         g.generation()
