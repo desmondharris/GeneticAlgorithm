@@ -1,11 +1,12 @@
 import os
 import threading
 import io
+import queue
+import time
 
 import customtkinter
 from PIL import Image
 from matplotlib import pyplot as plt
-
 from genetic import GeneticAlgorithm
 
 customtkinter.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -13,9 +14,31 @@ customtkinter.set_default_color_theme("blue")  # Themes: "blue" (standard), "gre
 
 g = None
 
+def eventQueueMsg(q, type, payload):
+    if type not in ["guiout", "generationinfo", "eos"]:
+        raise TypeError("Unknown event type")
+    q.put((type, payload))
+
+
+class GeneticThread(threading.Thread):
+    def __init__(self, cities, initialPopulation, selection, mutation, pm, pc, gens, result_queue):
+        threading.Thread.__init__(self)
+        self.gens = gens
+        self.ga = GeneticAlgorithm(cities, initialPopulation, selection, mutation, pm, pc, q=result_queue)
+        self.result_queue = result_queue
+
+    def run(self):
+        for _ in range(self.gens):
+            self.ga.run(1)
+            eventQueueMsg(self.result_queue, "generationinfo", self.ga.history)
+            time.sleep(.5)
+        eventQueueMsg(self.result_queue, "eos", None)
+
+
 class App(customtkinter.CTk):
     def __init__(self):
         super().__init__()
+        self.result_queue = queue.Queue()
 
         # configure window
         self.title("CustomTkinter complex_example.py")
@@ -103,6 +126,8 @@ class App(customtkinter.CTk):
 
         self.textbox.insert("0.0", "Output log for algorithm training")
 
+        self.trainThread = None
+
     def open_input_dialog_event(self):
         dialog = customtkinter.CTkInputDialog(text="Type in a number:", title="CTkInputDialog")
         print("CTkInputDialog:", dialog.get_input())
@@ -115,33 +140,47 @@ class App(customtkinter.CTk):
         customtkinter.set_widget_scaling(new_scaling_float)
 
     def updateGraph(self):
-        if g is None:
-            return
-        fig, ax = plt.subplots(figsize=(10, 6))
+        try:
+            history = self.result_queue.get_nowait()  # Get data from the queue without blocking
+            if history:
+                if history[0] == "guiout":
+                    self.textbox.insert("end", history[1])
+                    raise queue.Empty
+                elif history[0] == "generationinfo":
+                    history = history[1]
+                else:
+                    raise ValueError
+                plt.style.use("dark_background")
+                fig, ax = plt.subplots(figsize=(10, 6))
+                #history = history[1]
+                ax.plot(range(history["generations"]), history["mins"], label='Min Cost', marker='o')
+                ax.plot(range(history["generations"]), history["maxes"], label='Max Cost', marker='x')
+                ax.plot(range(history["generations"]), history["averages"], label='Average Cost', marker='s')
 
-        # Plot the min, max, and average costs
-        ax.plot(range(g.history["generations"]), g.history["mins"], label='Min Cost', marker='o')
-        ax.plot(range(g.history["generations"]), g.history["maxes"], label='Max Cost', marker='x')
-        ax.plot(range(g.history["generations"]), g.history["averages"], label='Average Cost', marker='s')
+                ax.set_xlabel('Generations')
+                ax.set_ylabel('Cost')
+                ax.set_title('Genetic Algorithm Cost over Generations')
+                ax.legend()
+                ax.grid(True)
 
-        # Add labels and title
-        ax.set_xlabel('Generations')
-        ax.set_ylabel('Cost')
-        ax.set_title('Genetic Algorithm Cost over Generations')
-        ax.legend()
-        ax.grid(True)
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                plt.close(fig)
+                buf.seek(0)
 
-        # Save the plot to a BytesIO buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        plt.close(fig)  # Close the figure to free up memory
-        buf.seek(0)  # Move the cursor to the beginning of the BytesIO buffer
+                img = Image.open(buf)
+                self.graph = customtkinter.CTkImage(img, size=(900, 540))
+                self.imgFrame = customtkinter.CTkLabel(self, text="", image=self.graph, width=250)
+                self.imgFrame.grid(row=1, columnspan=2, column=1, padx=20, pady=(20, 10))
+        except queue.Empty:
+            pass
+        # when triggered at invalid time
+        except ValueError:
+            pass
 
-        # Use PIL to open the image from the buffer
-        img = Image.open(buf)
-        self.graph = customtkinter.CTkImage(img, size=(900, 540))
-        self.imgFrame = customtkinter.CTkLabel(self, text="", image=self.graph, width=250)
-        self.imgFrame.grid(row=1, columnspan=2, column=1, padx=20, pady=(20, 10))
+        # Schedule the next update
+        self.after(50, self.updateGraph)
+
 
 
     def train_algorithm(self):
@@ -157,19 +196,16 @@ class App(customtkinter.CTk):
             g = GeneticAlgorithm(cities, int(self.populationSize.get()), self.selectionMethodOption.get().lower(), self.mutationMethodOption.get().lower(),
                                  float(self.mutProb.get()), float(self.crossProb.get()))
         gens = int(self.generations.get())
-        trainThread = threading.Thread(target=g.run, args=(gens,))
-        trainThread.start()
-        self.textbox.delete("1.0", "end")
-        currentGenerations = 0
-        while True:
-            if g.history["generations"] > currentGenerations:
-                self.textbox.insert(f"end", "Generation: " + str(g.history["generations"]) + "\n")
-                currentGenerations += 1
-                self.updateGraph()
-                if g.history["generations"] >= gens:
-                    break
+        self.after(250, self.updateGraph,)
+        self.trainThread = GeneticThread(cities, int(self.populationSize.get()), self.selectionMethodOption.get().lower(), self.mutationMethodOption.get().lower(),
+                                 float(self.mutProb.get()), float(self.crossProb.get()), gens, self.result_queue)
+        self.trainThread.start()
 
 
+def run_genetic_training(n: int, g: GeneticAlgorithm):
+    t = threading.Thread(target=g.run, args=(n,))
+    t.daemon = True
+    t.start()
 
 
 
