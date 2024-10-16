@@ -1,7 +1,4 @@
 import queue
-import threading
-import time
-
 import numpy as np
 import random
 """
@@ -97,7 +94,10 @@ class GeneticAlgorithm:
 
     def generation(self):
         eventQueueMsg(self.q, "guiout", f"Beginning Generation {self.history['generations']}")
-        parents = self.selection()
+        if self.selection == "roulette":
+            parents = self.roulette()
+        elif self.selection == "tournament":
+            parents, _ = self.tournament()
         pairs = []
         # assign parent pairs
         for i in range(0, int(len(parents) / 2) + 1, 2):
@@ -179,7 +179,7 @@ class GeneticAlgorithm:
             leastFit.append(players[np.argmax(scores)])
 
         return np.array(parents), np.array(leastFit)
-    
+
 
     # python implementation of psuedocode in Toathom and Camprasert(2022)
     def csox(self, parent1, parent2):
@@ -197,7 +197,7 @@ class GeneticAlgorithm:
 
 
         offspring = np.full((6, len(parent1)), -556456)
-        # for i = 0 to 2 do 
+        # for i = 0 to 2 do
         for i in range(3):
             if i==0:
                 pos1 = r1
@@ -207,7 +207,7 @@ class GeneticAlgorithm:
                 pos2 = r1
             elif i==2:
                 pos1 = r2
-                pos2 = len(parent1) 
+                pos2 = len(parent1)
 
             # init empty offspring
             offspring[2*i] = np.full(len(parent1), -345345345, dtype="int64")
@@ -234,7 +234,7 @@ class GeneticAlgorithm:
                 pIdx += 1
                 if pIdx > len(parent1) - 1:
                     pIdx = 0
-            
+
             pIdx = pos2
             if pIdx > len(parent1) - 1:
                 pIdx = 0
@@ -247,7 +247,7 @@ class GeneticAlgorithm:
                 pIdx += 1
                 if pIdx > len(parent2) - 1:
                     pIdx = 0
-            
+
             offspring[i*2][pos2:] = p2[:(len(parent1) - pos2)]
             rightChunk = p2[:(len(parent1) - pos2)]
             offspring[i*2][:pos1] = p2[(len(parent1) - pos2):]
@@ -257,14 +257,13 @@ class GeneticAlgorithm:
             offspring[i*2+1][:pos1] = p1[(len(parent1) - pos2):]
             verifyIndividual(offspring[i*2])
             verifyIndividual(offspring[i*2+1])
-            pass
         for o in offspring:
             verifyIndividual(o)
         costs = [cost(ind, self.dist) for ind in offspring]
         winnerIndices = np.argpartition(costs, len(costs) -2)[:2]
         return (offspring[winnerIndices[0]], offspring[winnerIndices[0]])
 
-                
+
 
 
 
@@ -295,9 +294,6 @@ def main():
         for i in range(100):
             _, x, y = f.readline().split()
             cities.append((float(x), float(y)))
-    print("bp1")
-    g = GeneticAlgorithm(cities, 200, "roulette", "scramble", .05, 0.2)
-    g.csox(np.array([3,5,8,2,1,9,4,6,7]), np.array([8,1,5,7,3,4,6,2,9]))
     # Run the genetic algorithm for a specified number of generations
     for _ in range(50):  # Increase the number of generations if needed
         g.generation()
@@ -309,7 +305,7 @@ def main():
     maxes = g.history["maxes"]
     averages = g.history["averages"]
 
-    # Plot the history of min, max, and average costs
+    # Plot the history of min,/,.., max, and average costs
     plt.figure(figsize=(10, 6))
     plt.plot(generations, mins, label="Min Cost", marker='o')
     plt.plot(generations, maxes, label="Max Cost", marker='x')
@@ -325,4 +321,5 @@ def main():
 
 
 if __name__ == "__main__":
+    print("he")
     main()
