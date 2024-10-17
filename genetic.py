@@ -1,6 +1,8 @@
+import json
 import queue
 import numpy as np
 import random
+import sys
 """
 Chromosome: a 100-element numpy array containing the path
 Initial Population: 150
@@ -22,6 +24,7 @@ def cost(ch: np.array, dist: np.array):
     for i in range(1, len(ch)):
         total += dist[int(ch[i-1])][int(ch[i])]
     total += dist[int(ch[98])][99]
+    total += dist[99][0]
     return total
 
 
@@ -50,7 +53,7 @@ class GeneticAlgorithm:
 
         if selection not in ["roulette", "tournament"]:
             raise TypeError("Selection must be either roulette or tournament.")
-        self.selection = self.roulette if selection == "roulette" else self.tournament
+        self.selection = selection
 
         if mutation not in ["scramble", "swap"]:
             raise TypeError("Mutation must be either scramble or swap.")
@@ -77,6 +80,7 @@ class GeneticAlgorithm:
             "mins": [],
             "maxes": [],
             "averages": [],
+            "abs_min": (sys.maxsize, [-1]*100) # cost, path(as list)
         }
 
         self.populate()
@@ -116,12 +120,18 @@ class GeneticAlgorithm:
         # mutate for each indv
         for i in range(self.populationSize):
             self.swap(i)
+        # log info for graphing
         self.history["generations"] += 1
         min, max, average = self.evaluate()
-        # print(f"Generation: {self.history['generations']} \n Min: {min} \n Max: {max} \n Avg: {average}")
+        print(f"Generation: {self.history['generations']} \n Min: {min}  Max: {max}  Avg: {average}")
         self.history["mins"].append(min)
         self.history["maxes"].append(max)
         self.history["averages"].append(average)
+        if min < self.history["abs_min"][0]:
+            min_idx = np.where(np.array([cost(i, self.dist) for i in self.population]) == min)
+            path = self.population[min_idx]
+            path_cost = cost(self.population[min_idx][0], self.dist)
+            self.history["abs_min"] = (path_cost, [int(node) for node in path[0]])
         eventQueueMsg(self.q, "guiout", "Finished!")
 
     def populate(self):
@@ -222,6 +232,7 @@ class GeneticAlgorithm:
             p1 = np.full(len(parent1)-(pos2-pos1), -34545, dtype="int64")
             p2 = np.full(len(parent1)-(pos2-pos1), -234234, dtype="int64")
 
+            # p1 ← (P 1(pos2 + 1:) + P(: pos2 − 1)) ∩ O[2i + 2]
             pIdx = pos2
             if pIdx > len(parent1) - 1:
                 pIdx = 0
@@ -235,6 +246,7 @@ class GeneticAlgorithm:
                 if pIdx > len(parent1) - 1:
                     pIdx = 0
 
+            # p2 ← (P 2(pos2 + 1:) + P(: pos2 − 1)) ∩ O[2i + 2]
             pIdx = pos2
             if pIdx > len(parent1) - 1:
                 pIdx = 0
@@ -247,18 +259,22 @@ class GeneticAlgorithm:
                 pIdx += 1
                 if pIdx > len(parent2) - 1:
                     pIdx = 0
-
+            # O[2i + 1] − O[2i + 1](pos1 : pos2) ← p2
             offspring[i*2][pos2:] = p2[:(len(parent1) - pos2)]
             rightChunk = p2[:(len(parent1) - pos2)]
             offspring[i*2][:pos1] = p2[(len(parent1) - pos2):]
             leftChunk = p2[(len(parent1) - pos2):]
 
+            # O[2i + 2] − O[2i + 2](pos1 : pos2) ← p1
             offspring[i*2+1][pos2:] = p1[:(len(parent1) - pos2)]
             offspring[i*2+1][:pos1] = p1[(len(parent1) - pos2):]
+            # ensure chromosome is valid for tsp
             verifyIndividual(offspring[i*2])
             verifyIndividual(offspring[i*2+1])
         for o in offspring:
             verifyIndividual(o)
+
+        # select two best offspring
         costs = [cost(ind, self.dist) for ind in offspring]
         winnerIndices = np.argpartition(costs, len(costs) -2)[:2]
         return (offspring[winnerIndices[0]], offspring[winnerIndices[0]])
@@ -268,23 +284,33 @@ class GeneticAlgorithm:
 
 
 
-    def scramble(self):
-        pass
-
-    def swap(self, ch):
+    def scramble(self, ch: int):
         if random.random() < self.pm:
+            # get random integer 0-88
+            starting_point = random.randint(0, 88)
+            subset = self.population[ch][starting_point:starting_point+10]
+            np.random.shuffle(subset)
+            for i, item in enumerate(subset):
+                self.population[ch][i+starting_point] = item
+            verifyIndividual(self.population[ch])
+
+
+    def swap(self, ch: int):
+        if random.random() < self.pm:
+            # indexes of elements to swap
             idxs = np.arange(99)
             np.random.shuffle(idxs)
             for i in range(8):
                 pair = []
                 for j in range(2):
+
                     last, newArray = idxs[-1], idxs[:-1]
                     pair.append(last)
                     idxs = newArray
                 tmp = self.population[ch][pair[1]]
                 self.population[ch][pair[1]] = self.population[ch][pair[0]]
                 self.population[ch][pair[0]] = tmp
-
+                verifyIndividual(self.population[ch])
 
 def main():
     with open("Random100.tsp", "r") as f:
@@ -294,32 +320,53 @@ def main():
         for i in range(100):
             _, x, y = f.readline().split()
             cities.append((float(x), float(y)))
-    # Run the genetic algorithm for a specified number of generations
-    for _ in range(50):  # Increase the number of generations if needed
-        g.generation()
+
+    # RUN_TYPE = "ROULETTESWAP"
+    #
+    # # Run Roulette/Swap Combo 5 times.
+    # for i in range(5):
+    #     g = GeneticAlgorithm(cities, 2500, "roulette", "swap", .05, .2)
+    #     for _ in range(650):
+    #         g.generation()
+    #
+    #     with open(f"runs/{RUN_TYPE}_{i}.json", "w") as json_file:
+    #         json.dump(g.history, json_file, indent=4)
+    #
+    # RUN_TYPE = "ROULETTESCRAMBLE"
+    # # Run Roulette/Scramble Combo 5 times.
+    # for i in range(5):
+    #     g = GeneticAlgorithm(cities, 2500, "roulette", "scramble", .05, .2)
+    #     for _ in range(650):
+    #         g.generation()
+    #
+    #     with open(f"runs/{RUN_TYPE}_{i}.json", "w") as json_file:
+    #         json.dump(g.history, json_file, indent=4)
+    #
+    # RUN_TYPE = "TOURNAMENTSWAP"
+    # # Run Tournament/Swap Combo 5 times
+    # for i in range(5):
+    #     g = GeneticAlgorithm(cities, 2500, "tournament", "swap", .05, .2)
+    #
+    #     for _ in range(650):
+    #         g.generation()
+    #
+    #     with open(f"runs/{RUN_TYPE}_{i}.json", "w") as json_file:
+    #         json.dump(g.history, json_file, indent=4)
+
+    RUN_TYPE = "TOURNAMENTSCRAMBLE"
+    # Run Tournament/Scramble Combo 5 times
+    for i in range(5):
+        g = GeneticAlgorithm(cities, 2500, "tournament", "scramble", .05, .2)
+
+        for _ in range(650):
+            g.generation()
+
+        with open(f"runs/{RUN_TYPE}_{i}.json", "w") as json_file:
+            json.dump(g.history, json_file, indent=4)
 
 
-    # Extract data from history
-    generations = list(range(1, g.history["generations"] + 1))
-    mins = g.history["mins"]
-    maxes = g.history["maxes"]
-    averages = g.history["averages"]
 
-    # Plot the history of min,/,.., max, and average costs
-    plt.figure(figsize=(10, 6))
-    plt.plot(generations, mins, label="Min Cost", marker='o')
-    plt.plot(generations, maxes, label="Max Cost", marker='x')
-    plt.plot(generations, averages, label="Average Cost", marker='s')
-
-    plt.xlabel('Generations')
-    plt.ylabel('Cost')
-    plt.title('Genetic Algorithm Cost over Generations')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
 
 
 if __name__ == "__main__":
-    print("he")
     main()
