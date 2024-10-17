@@ -3,3 +3,6 @@
 .idea
 *.png
 *.jpg
+runs
+__pycache__
+
